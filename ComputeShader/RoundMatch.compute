@@ -1,0 +1,58 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel RoundMatch
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+
+struct RoundMatchInfo
+{
+    float3 roundPoint;
+    int hasPoint;
+};
+
+RoundMatchInfo MakeRoundMatchInfo(float3 vec,bool has)
+{
+    RoundMatchInfo o;
+    o.hasPoint = (int)has;
+    o.roundPoint = vec;
+    return o;
+}
+
+int _roundMatchNum;
+StructuredBuffer<float3> _sourceRoundPoints;
+float3 _roundMatchNormal;
+RWStructuredBuffer<RoundMatchInfo> _roundMatches;
+
+[numthreads(128,1,1)]
+void RoundMatch (uint3 id : SV_DispatchThreadID)
+{
+    if((int)id.x>=_roundMatchNum) return;
+    int matchStart = id.x * 3;
+    float3 v0 = _sourceRoundPoints[matchStart];
+    float3 v1 = _sourceRoundPoints[matchStart+1];
+    float3 v2 = _sourceRoundPoints[matchStart+2];
+    float3 v01 = v1 - v0;
+    float3 v12 = v2 - v1;
+    
+    float3 v01mid =  v0 + v01/2.0f;
+    float3 v12mid =  v1 + v12/2.0f;
+    float3 n01 = cross(_roundMatchNormal,v01);
+    float3 n12 = cross(_roundMatchNormal,v12);
+    
+    if(dot(n01,n12) == 1)
+    {
+        _roundMatches[id.x] = MakeRoundMatchInfo(float3(0,0,0),false);
+        return;
+    }
+    float3 startPointSeg = v12mid - v01mid;
+    float3 vecS1 = cross(n01,n12);
+    float3 vecS2 = cross(startPointSeg,n12);
+
+    if(dot(vecS1,vecS2)!=0) {
+        _roundMatches[id.x] = MakeRoundMatchInfo(float3(0,0,0),false);
+        return;
+    }
+    float tmp = length(vecS1);
+    float temp = dot(vecS2,vecS1)/(tmp*tmp);
+    _roundMatches[id.x] = MakeRoundMatchInfo(v01mid + n01*temp,true);
+}

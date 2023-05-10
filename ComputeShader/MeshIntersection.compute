@@ -1,0 +1,101 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel MeshRaycast
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+struct RaycastInfo
+{
+    float3 raycastPoint;
+    int hasIntersection;
+};
+
+RaycastInfo MakeRaycastInfo(float3 vec,bool has)
+{
+    RaycastInfo o;
+    o.hasIntersection = (int)has;
+    o.raycastPoint = vec;
+    return o;
+}
+
+float4 LineLineIntersection(float3 p1,float3 v1,float3 p2,float3 v2)
+{
+    if (abs(dot(v1, v2) - 1) < 1E-8)
+        return float4(0,0,0,0);
+    
+    float3 startPointSeg = p2 - p1;
+    float3 vecS1 = cross(v1, v2);            // 有向面积1
+    float3 vecS2 = cross(startPointSeg, v2); // 有向面积2
+    float num = dot(startPointSeg, vecS1);
+
+    // 判断两这直线是否共面
+    if (num >= 1E-05 || num <= -1E-05)
+        return float4(0,0,0,0);
+
+    // 有向面积比值，利用点乘是因为结果可能是正数或者负数
+    float temp = vecS1.x*vecS1.x+vecS1.y*vecS1.y+vecS1.z*vecS1.z;
+    float num2 = dot(vecS2, vecS1) / temp;
+
+    float3 intersection = p1 + v1 * num2;
+    return float4(intersection.xyz,1);
+}
+
+float3 PlaneProjectionPoint(float3 planeNormal,float3 planePoint,float3 position)
+{
+    float3 posToPlane = planePoint - position;
+    float distance = dot(planeNormal,posToPlane);
+    return position + planeNormal * distance;
+}
+
+float3 PlaneProjectionVector(float3 planeNormal,float3 direction)
+{
+    return cross(cross(planeNormal,direction),planeNormal);
+}
+
+StructuredBuffer<float3> _sourceVertices;
+StructuredBuffer<int> _sourceIndices;
+float3 _position;
+float3 _direction;
+int _triangleNum;
+
+RWStructuredBuffer<RaycastInfo> _raycastPoints;
+
+
+[numthreads(128,1,1)]
+void MeshRaycast (uint3 id : SV_DispatchThreadID)
+{
+    if((int)id.x>=_triangleNum) return;
+    int triangleStart = id.x * 3;
+    float3 v0 = _sourceVertices[_sourceIndices[triangleStart]];
+    float3 v1 = _sourceVertices[_sourceIndices[triangleStart+1]];
+    float3 v2 = _sourceVertices[_sourceIndices[triangleStart+2]];
+    float3 v01 = v1 - v0;
+    float3 v12 = v2 - v1;
+    float3 planeNormal = normalize(cross(v01,v12));
+
+    float3 rayPointProjection = PlaneProjectionPoint(planeNormal,v0,_position);
+    float3 rayCastHitDir = _direction - dot(planeNormal,_direction) * planeNormal;  //PlaneProjectionVector(planeNormal,_direction);
+    
+    
+    float4 tmp = LineLineIntersection(_position,_direction,rayPointProjection,rayCastHitDir);
+    float3 intersection = tmp.xyz;
+    if(tmp.w<0.5)
+    {
+        _raycastPoints[id.x]=MakeRaycastInfo(float3(0,0,0),false);
+        return;
+    }
+    
+    
+    float3 v0P = intersection - v0;
+    float3 v02 = v2 - v0;
+    float3 v1P = intersection - v1;
+    bool side0 = dot(cross(v01,v0P),planeNormal)>0;
+    bool side1 = dot(cross(v0P,v02),planeNormal)>0;
+    bool side2 = dot(cross(v12,v1P),planeNormal)>0;
+    if(side0&&side1&&side2)
+    {
+        _raycastPoints[id.x]=MakeRaycastInfo(intersection,true);
+    }else
+    {
+        _raycastPoints[id.x]=MakeRaycastInfo(intersection,false);
+    }
+}

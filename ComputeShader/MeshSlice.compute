@@ -1,0 +1,103 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel MeshSlice
+
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+
+
+
+struct SliceInfo
+{
+    float3 slicePoint;
+    int hasSlice;
+};
+
+SliceInfo MakeSliceInfo(float3 vec,bool has)
+{
+    SliceInfo o;
+    o.hasSlice = (int)has;
+    o.slicePoint = vec;
+    return o;
+}
+
+StructuredBuffer<float3> _sourceVertices;
+StructuredBuffer<int> _sourceIndices;
+
+float3 _slicePlaneNormal;
+float3 _slicePlaneMidPoint;
+float _slicePlaneDistance;
+float _outerRadius;
+float _innerRadius;
+int _triangleNum;
+
+RWStructuredBuffer<SliceInfo> _slicePoints;
+
+[numthreads(128,1,1)]
+void MeshSlice (uint3 id : SV_DispatchThreadID)
+{
+    
+    if((int)id.x>=_triangleNum) return;
+
+    int triangleStart = id.x * 3;
+    float3 v0 = _sourceVertices[_sourceIndices[triangleStart]];
+    float3 v1 = _sourceVertices[_sourceIndices[triangleStart+1]];
+    float3 v2 = _sourceVertices[_sourceIndices[triangleStart+2]];
+    float d0 = dot(v0,_slicePlaneNormal) - _slicePlaneDistance;
+    float d1 = dot(v1,_slicePlaneNormal) - _slicePlaneDistance;
+    float d2 = dot(v2,_slicePlaneNormal) - _slicePlaneDistance;
+    if(d0*d1<0)
+    {
+        if(d1*d2<0)
+        {
+            float3 v01 = v1 - v0;
+            float3 point01X = (v01*abs(d0))/(abs(d0)+abs(d1))+v0;
+            float3 v12 = v2 - v1;
+            float3 point12X = (v12*abs(d1))/(abs(d1)+abs(d2))+v1;
+            _slicePoints[id.x*2]=MakeSliceInfo(point01X,
+                distance(point01X,_slicePlaneMidPoint)<=_outerRadius
+                  &&distance(point01X,_slicePlaneMidPoint)>=_innerRadius
+                );
+            _slicePoints[id.x*2+1]=MakeSliceInfo(point12X,
+                distance(point12X,_slicePlaneMidPoint)<=_outerRadius
+                  &&distance(point01X,_slicePlaneMidPoint)>=_innerRadius
+                );
+        }else
+        {
+            float3 v01 = v1 - v0;
+            float3 point01Y = (v01*abs(d0))/(abs(d0)+abs(d1))+v0;
+            float3 v20 = v0 - v2;
+            float3 point20Y = (v20*abs(d2))/(abs(d2)+abs(d0))+v2;
+            _slicePoints[id.x*2]=MakeSliceInfo(point01Y,
+                distance(point01Y,_slicePlaneMidPoint)<=_outerRadius
+                  &&distance(point01Y,_slicePlaneMidPoint)>=_innerRadius
+                );
+            _slicePoints[id.x*2+1]=MakeSliceInfo(point20Y,
+                distance(point20Y,_slicePlaneMidPoint)<=_outerRadius
+                  &&distance(point20Y,_slicePlaneMidPoint)>=_innerRadius
+                );
+        }
+    }else if(d1*d2<0)
+    {
+        float3 v12 = v2 - v1;
+        float3 point01Z = (v12*abs(d1))/(abs(d1)+abs(d2))+v1;
+        float3 v20 = v0 - v2;
+        float3 point20Z = (v20*abs(d2))/(abs(d2)+abs(d0))+v2;
+        _slicePoints[id.x*2]=MakeSliceInfo(point01Z,
+            distance(point01Z,_slicePlaneMidPoint)<=_outerRadius
+              &&distance(point01Z,_slicePlaneMidPoint)>=_innerRadius
+            );
+        _slicePoints[id.x*2+1]=MakeSliceInfo(point20Z,
+            distance(point20Z,_slicePlaneMidPoint)<=_outerRadius
+              &&distance(point20Z,_slicePlaneMidPoint)>=_innerRadius
+            );
+    }else
+    {
+        _slicePoints[id.x*2]=MakeSliceInfo(float3(0,0,0),false);
+        _slicePoints[id.x*2+1]=MakeSliceInfo(float3(0,0,0),false);
+    }
+}
+
+
+
+
